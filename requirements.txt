@@ -1,0 +1,7 @@
+py-cord[voice]>=2.7.0,<3.0.0
+faster-whisper>=1.1.0,<2.0.0
+python-dotenv>=1.0.1,<2.0.0
+google-genai>=1.20.0,<2.0.0
+pydub>=0.25.1,<1.0.0
+ffmpeg-python>=0.2.0,<1.0.0
+aiofiles>=24.1.0,<25.0.0
