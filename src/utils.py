@@ -3,12 +3,25 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+def resolve_project_root() -> Path:
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        for candidate in (exe_dir, exe_dir.parent):
+            if (candidate / ".env").exists() or (candidate / ".env.example").exists():
+                return candidate
+            if (candidate / "data").exists() and (candidate / "models").exists():
+                return candidate
+        return exe_dir
+    return Path(__file__).resolve().parents[1]
+
+
+PROJECT_ROOT = resolve_project_root()
 
 
 def ensure_dir(path: Path) -> Path:

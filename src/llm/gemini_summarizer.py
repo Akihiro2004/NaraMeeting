@@ -84,10 +84,17 @@ class GeminiSummarizer:
             raise GeminiError("Gemini returned an empty cleaned transcript.")
         return cleaned
 
-    def summarize(self, cleaned_transcript: str) -> SummaryResult:
+    def summarize(self, cleaned_transcript: str, meeting_context: str = "") -> SummaryResult:
         if not cleaned_transcript.strip():
             raise GeminiError("Empty cleaned transcript. Cannot create summary or meeting minutes.")
-        response_text = self._generate(f"{SUMMARY_PROMPT}\n\nCleaned transcript:\n{cleaned_transcript}")
+        context_block = ""
+        if meeting_context.strip():
+            context_block = (
+                "\n\nNon-speech Discord voice context:\n"
+                f"{meeting_context.strip()}\n\n"
+                "Use this context for attendance and timeline only. Do not treat it as spoken transcript."
+            )
+        response_text = self._generate(f"{SUMMARY_PROMPT}{context_block}\n\nCleaned transcript:\n{cleaned_transcript}")
         summary, minutes = split_summary_response(response_text)
         raw_response = {
             "model": self.model,

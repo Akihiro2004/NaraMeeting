@@ -44,6 +44,8 @@ class ChannelPickerApp(tk.Tk):
         self.text_by_label: dict[str, dict[str, Any]] = {}
         self.worker_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
         self.is_loading = False
+        self.is_closing = False
+        self.poll_after_id: str | None = None
 
         self.title("Nara")
         self.geometry("720x520")
@@ -52,7 +54,7 @@ class ChannelPickerApp(tk.Tk):
         self._build_style()
         self._build_ui(initial_token)
         self.protocol("WM_DELETE_WINDOW", self._cancel)
-        self.after(100, self._poll_worker)
+        self.poll_after_id = self.after(100, self._poll_worker)
 
     def _build_style(self) -> None:
         style = ttk.Style(self)
@@ -69,7 +71,31 @@ class ChannelPickerApp(tk.Tk):
         style.configure("Accent.TButton", background="#0a84ff", foreground="#ffffff")
         style.map("Accent.TButton", background=[("active", "#409cff"), ("disabled", "#2c2c2e")])
         style.configure("TEntry", fieldbackground="#3a3a3c", foreground="#f5f5f7", insertcolor="#f5f5f7", bordercolor="#48484a")
-        style.configure("TCombobox", fieldbackground="#3a3a3c", background="#3a3a3c", foreground="#f5f5f7", arrowcolor="#f5f5f7")
+        style.configure(
+            "Dark.TCombobox",
+            fieldbackground="#3a3a3c",
+            background="#3a3a3c",
+            foreground="#f5f5f7",
+            selectbackground="#3a3a3c",
+            selectforeground="#f5f5f7",
+            arrowcolor="#f5f5f7",
+            bordercolor="#5a5a5c",
+            lightcolor="#5a5a5c",
+            darkcolor="#1c1c1e",
+        )
+        style.map(
+            "Dark.TCombobox",
+            fieldbackground=[("readonly", "#3a3a3c"), ("disabled", "#2c2c2e"), ("!disabled", "#3a3a3c")],
+            foreground=[("readonly", "#f5f5f7"), ("disabled", "#8e8e93"), ("!disabled", "#f5f5f7")],
+            selectbackground=[("readonly", "#3a3a3c"), ("!disabled", "#3a3a3c")],
+            selectforeground=[("readonly", "#f5f5f7"), ("!disabled", "#f5f5f7")],
+            background=[("active", "#48484a"), ("readonly", "#3a3a3c"), ("disabled", "#2c2c2e")],
+            arrowcolor=[("disabled", "#8e8e93"), ("!disabled", "#f5f5f7")],
+        )
+        self.option_add("*TCombobox*Listbox.background", "#242426")
+        self.option_add("*TCombobox*Listbox.foreground", "#f5f5f7")
+        self.option_add("*TCombobox*Listbox.selectBackground", "#0a84ff")
+        self.option_add("*TCombobox*Listbox.selectForeground", "#ffffff")
 
     def _build_ui(self, initial_token: str) -> None:
         root = ttk.Frame(self, style="Root.TFrame", padding=24)
@@ -97,18 +123,21 @@ class ChannelPickerApp(tk.Tk):
 
         ttk.Label(panel, text="Server", style="Panel.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 12), pady=8)
         self.guild_var = tk.StringVar()
-        self.guild_combo = ttk.Combobox(panel, textvariable=self.guild_var, state="readonly")
+        self.guild_combo = ttk.Combobox(panel, textvariable=self.guild_var, state="readonly", style="Dark.TCombobox", height=16)
+        self.guild_combo.configure(postcommand=lambda: self.after_idle(lambda: self._style_combobox_dropdown(self.guild_combo)))
         self.guild_combo.grid(row=1, column=1, columnspan=2, sticky="ew", pady=8)
         self.guild_combo.bind("<<ComboboxSelected>>", self._on_guild_selected)
 
         ttk.Label(panel, text="Voice", style="Panel.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 12), pady=8)
         self.voice_var = tk.StringVar()
-        self.voice_combo = ttk.Combobox(panel, textvariable=self.voice_var, state="readonly")
+        self.voice_combo = ttk.Combobox(panel, textvariable=self.voice_var, state="readonly", style="Dark.TCombobox", height=16)
+        self.voice_combo.configure(postcommand=lambda: self.after_idle(lambda: self._style_combobox_dropdown(self.voice_combo)))
         self.voice_combo.grid(row=2, column=1, columnspan=2, sticky="ew", pady=8)
 
         ttk.Label(panel, text="Text output", style="Panel.TLabel").grid(row=3, column=0, sticky="w", padx=(0, 12), pady=8)
         self.text_var = tk.StringVar()
-        self.text_combo = ttk.Combobox(panel, textvariable=self.text_var, state="readonly")
+        self.text_combo = ttk.Combobox(panel, textvariable=self.text_var, state="readonly", style="Dark.TCombobox", height=16)
+        self.text_combo.configure(postcommand=lambda: self.after_idle(lambda: self._style_combobox_dropdown(self.text_combo)))
         self.text_combo.grid(row=3, column=1, columnspan=2, sticky="ew", pady=8)
 
         self.status_var = tk.StringVar(value="Paste the bot token or use the token already loaded from .env, then connect.")
@@ -146,10 +175,12 @@ class ChannelPickerApp(tk.Tk):
             self.worker_queue.put(("error", str(exc) or exc.__class__.__name__))
 
     def _poll_worker(self) -> None:
+        if self.is_closing:
+            return
         try:
             kind, payload = self.worker_queue.get_nowait()
         except queue.Empty:
-            self.after(100, self._poll_worker)
+            self.poll_after_id = self.after(100, self._poll_worker)
             return
 
         self.is_loading = False
@@ -162,7 +193,8 @@ class ChannelPickerApp(tk.Tk):
         else:
             self._set_status(f"Could not connect: {payload}")
             messagebox.showerror("Discord connection failed", str(payload))
-        self.after(100, self._poll_worker)
+        if not self.is_closing:
+            self.poll_after_id = self.after(100, self._poll_worker)
 
     def _populate_guilds(self) -> None:
         self.guild_by_label.clear()
@@ -176,7 +208,12 @@ class ChannelPickerApp(tk.Tk):
             preferred_index = self._preferred_index(labels, self.last_selection.get("guild_id"))
             self.guild_combo.current(preferred_index)
             self._on_guild_selected()
-            self._set_status(f"Loaded {len(labels)} server(s). Select channels, then start Nara.")
+            total_voice = sum(len(guild.get("voice_channels", [])) for guild in self.snapshot)
+            total_text = sum(len(guild.get("text_channels", [])) for guild in self.snapshot)
+            self._set_status(
+                f"Loaded {len(labels)} server(s), {total_voice} voice channel(s), and {total_text} text channel(s). "
+                "Select channels, then start Nara."
+            )
         else:
             self._set_status("The bot is not in any servers yet. Invite it first, then reconnect.")
 
@@ -211,6 +248,17 @@ class ChannelPickerApp(tk.Tk):
             target[label] = channel
             labels.append(label)
         return labels
+
+    def _style_combobox_dropdown(self, combobox: ttk.Combobox) -> None:
+        try:
+            popdown = combobox.tk.call("ttk::combobox::PopdownWindow", str(combobox))
+            listbox = f"{popdown}.f.l"
+            combobox.tk.call(listbox, "configure", "-background", "#242426")
+            combobox.tk.call(listbox, "configure", "-foreground", "#f5f5f7")
+            combobox.tk.call(listbox, "configure", "-selectbackground", "#0a84ff")
+            combobox.tk.call(listbox, "configure", "-selectforeground", "#ffffff")
+        except tk.TclError:
+            return
 
     def _refresh_start_state(self) -> None:
         if self.guild_var.get() and self.voice_var.get() and self.text_var.get():
@@ -282,6 +330,13 @@ class ChannelPickerApp(tk.Tk):
         return 0
 
     def _cancel(self) -> None:
+        self.is_closing = True
+        if self.poll_after_id is not None:
+            try:
+                self.after_cancel(self.poll_after_id)
+            except tk.TclError:
+                pass
+            self.poll_after_id = None
         self.result = None
         self.destroy()
 

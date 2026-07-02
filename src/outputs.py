@@ -9,7 +9,7 @@ from .audio_utils import convert_to_16k_mono, split_wav
 from .config import NaraConfig
 from .contacts import SpeakerContactBook
 from .llm.gemini_summarizer import GeminiSummarizer
-from .recorder import RecordedAudioBundle, RecordedSpeakerFile
+from .recorder import RecordedAudioBundle, RecordedSpeakerFile, VoiceEvent
 from .stt.base import TranscriptSegment, seconds_to_timestamp
 from .stt.whisper_engine import LocalWhisperEngine
 from .utils import atomic_write_text, copy_if_exists, ensure_dir, iso_now, safe_filename, utcish_now_id, write_json
@@ -25,6 +25,7 @@ class GeneratedFiles:
     transcript_clean: Path
     transcript_json: Path
     speaker_contacts_json: Path | None = None
+    voice_events_json: Path | None = None
     meeting_summary: Path | None = None
     meeting_minutes: Path | None = None
     gemini_response_json: Path | None = None
@@ -32,6 +33,8 @@ class GeneratedFiles:
 
     def discord_uploads(self, include_summary: bool) -> list[Path]:
         files = [self.transcript_clean]
+        if self.voice_events_json:
+            files.append(self.voice_events_json)
         if include_summary:
             if self.meeting_summary:
                 files.insert(0, self.meeting_summary)
@@ -49,6 +52,7 @@ class ProcessingResult:
     recording_dir: Path
     files: GeneratedFiles
     segments: list[TranscriptSegment] = field(default_factory=list)
+    crash_note: str | None = None
 
 
 @dataclass(slots=True)
@@ -109,9 +113,11 @@ def process_recording_bundle(
     transcript_clean = transcript_dir / "transcript_clean.txt"
     transcript_json = transcript_dir / "transcript.json"
     speaker_contacts_json = transcript_dir / "speaker_contacts.json"
+    voice_events_json = transcript_dir / "voice_events.json"
     atomic_write_text(transcript_raw, raw_transcript)
     write_json(transcript_json, [segment.to_json() for segment in all_segments])
     write_meeting_speaker_contacts(speaker_contacts_json, converted, contact_book)
+    write_json(voice_events_json, [event.to_json() for event in bundle.voice_events])
 
     summarizer = GeminiSummarizer(config.gemini_api_key, model=config.gemini_model)
     logger.info("Gemini cleanup started")
@@ -124,7 +130,7 @@ def process_recording_bundle(
     gemini_response_json: Path | None = None
     if summarize:
         logger.info("Gemini summary started")
-        summary = summarizer.summarize(cleaned_transcript)
+        summary = summarizer.summarize(cleaned_transcript, meeting_context=render_voice_events(bundle.voice_events))
         meeting_summary = output_dir / "meeting_summary.md"
         meeting_minutes = output_dir / "meeting_minutes.md"
         gemini_response_json = output_dir / "gemini_response.json"
@@ -138,6 +144,7 @@ def process_recording_bundle(
         transcript_clean=transcript_clean,
         transcript_json=transcript_json,
         speaker_contacts_json=speaker_contacts_json,
+        voice_events_json=voice_events_json,
         meeting_summary=meeting_summary,
         meeting_minutes=meeting_minutes,
         gemini_response_json=gemini_response_json,
@@ -164,6 +171,7 @@ def process_recording_bundle(
         recording_dir=bundle.recording_dir,
         files=generated,
         segments=all_segments,
+        crash_note=bundle.crash_note,
     )
 
 
@@ -252,6 +260,12 @@ def render_transcript(segments: list[TranscriptSegment]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def render_voice_events(events: list[VoiceEvent]) -> str:
+    if not events:
+        return "No Discord voice join or leave events were captured during this recording."
+    return "\n".join(f"- {event.to_line()}" for event in events)
+
+
 def write_meeting_speaker_contacts(
     path: Path,
     speakers: list[ConvertedSpeakerAudio],
@@ -317,6 +331,8 @@ class ObsidianVaultWriter:
             copy_if_exists(generated.gemini_response_json, attachments_dir / "gemini_response.json")
         if generated.speaker_contacts_json:
             copy_if_exists(generated.speaker_contacts_json, attachments_dir / "speaker_contacts.json")
+        if generated.voice_events_json:
+            copy_if_exists(generated.voice_events_json, attachments_dir / "voice_events.json")
         if self.copy_audio:
             for speaker_file in bundle.speaker_files:
                 copy_if_exists(speaker_file.raw_path, attachments_dir / speaker_file.raw_path.name)
@@ -389,6 +405,8 @@ class ObsidianVaultWriter:
         meeting_body += f"- Transcript: {transcript_link}\n"
         meeting_body += f"- Summary: {summary_link}\n"
         meeting_body += f"- Minutes: {minutes_link}\n"
+        meeting_body += "\n## Voice Channel Events\n\n"
+        meeting_body += render_voice_events(bundle.voice_events) + "\n"
         meeting_body += "\n## Attendees\n\n"
         if speaker_records:
             for record in speaker_records:
@@ -407,6 +425,8 @@ class ObsidianVaultWriter:
             meeting_body += f"- {summary_link}\n"
         if generated.meeting_minutes:
             meeting_body += f"- {minutes_link}\n"
+        if generated.voice_events_json:
+            meeting_body += f"- Voice events JSON: `{generated.voice_events_json}`\n"
         meeting_body += f"- Attachments folder: [[{self._link_target(attachments_dir)}]]\n"
         atomic_write_text(meeting_note, meeting_body)
 

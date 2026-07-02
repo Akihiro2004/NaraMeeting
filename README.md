@@ -184,13 +184,26 @@ python main.py
 
 If `.venv` exists, `main.py` automatically reruns itself inside `.venv`, so the command still works from a normal PowerShell window.
 
-Nara opens a compact channel picker GUI first. It connects with the bot token, shows servers the bot is already in, then lets you select:
+Nara opens the control panel GUI. It connects with the bot token, shows servers the bot is already in, then lets you select:
 
 - Discord server
 - Voice channel to join
 - Text channel for result files
 
-Click **Start Nara** after selecting channels. You do not need to copy channel IDs manually.
+Click **Connect**, select channels, then click **Start Nara**. The GUI stays open after the bot starts and includes:
+
+- Live bot logs
+- Voice join and leave events
+- Audio receive status
+- Start Recording
+- Stop + Summary
+- Stop Transcript Only
+- Audio Test 5s
+- Leave Voice
+- List Speakers
+- Save Speaker Name
+
+Closing the GUI stops Nara.
 
 To open only the GUI and save the last selected channels without starting the bot:
 
@@ -206,16 +219,43 @@ python main.py --no-gui
 
 `DEFAULT_VOICE_CHANNEL_ID`, `DEFAULT_TEXT_CHANNEL_ID`, and `GUILD_ID` can stay blank in `.env` when using the GUI.
 
-## Channel Picker GUI
+## Run the Executable
 
-The GUI uses the bot token from `.env`. If the token is blank, paste it into the masked token field and click **Connect**.
+This repo includes a PyInstaller build recipe in `Nara.spec`. The generated executable is:
 
-The picker saves:
+```text
+dist\Nara.exe
+```
+
+Double-click `dist\Nara.exe` to open the control panel. The executable still uses the project-level `.env`, `data`, `models`, `logs`, and `obsidian_vault` folders, so keep it inside this project folder unless you copy those folders with it.
+
+To validate the executable exit code:
+
+```powershell
+.\dist\Nara.exe --check
+```
+
+Because the executable is windowed, use `python main.py --check` if you want visible setup-check text in PowerShell.
+
+To rebuild it:
+
+```powershell
+.\.venv\Scripts\pyinstaller --clean --noconfirm Nara.spec --distpath dist --workpath build\pyinstaller
+```
+
+## Control Panel GUI
+
+The GUI uses the bot token and Gemini key from `.env`. If either is blank, paste it into the masked fields.
+
+The control panel saves:
 
 - `DISCORD_TOKEN` back into `.env` if you entered it in the GUI
+- `GEMINI_API_KEY` back into `.env` if you entered it in the GUI
 - Last selected guild, voice channel, and text channel in `data/runtime/last_channel_selection.json`
 
-The selected channels are passed to the bot for the current run. Nara still shows the picker on normal startup so you can change servers/channels without editing `.env`.
+Use **Audio Test 5s** after Nara joins voice. Speak during the test. If Nara can hear Discord voice receive, the log shows the captured speaker ID, audio duration, and audio size. During a real recording, Nara saves separate speaker tracks when Discord provides per-user audio.
+
+Voice channel join/leave events are saved into `voice_events.json`, copied into Obsidian, and passed to Gemini as attendance/timeline context for the final summary.
 
 ## Slash Commands
 
@@ -336,15 +376,16 @@ Run `python setup_nara.py` again and inspect the pip error.
 
 ## Discord Recording Caveat
 
-Discord voice recording from Python depends on library support and Discord voice behavior. Nara uses Pycord's recording sink API and validates captured audio after `/stop_record`. If Discord or permissions prevent receiving audio, Nara stops and reports the issue instead of creating fake transcript files.
+Discord voice recording from Python depends on library support and Discord voice behavior. Nara uses Pycord's recording sink API and validates captured audio after **Stop + Summary** or **Stop Transcript Only**. If Discord or permissions prevent receiving audio, Nara stops and reports the issue instead of creating fake transcript files.
 
 ## Quick Test Meeting
 
-1. Start Nara with `python main.py`.
-2. Join a short voice call.
-3. Run `/join voice_channel_id`.
-4. Run `/start_record`.
-5. Speak for 20 to 30 seconds in Indonesian, English, or both.
-6. Run `/stop_record summarize:true`.
-7. Check Discord output and `obsidian_vault/Indexes/Nara Meetings.md`.
-8. Run `/list_speakers`, then `/set_speaker_name user_id name` for any captured speaker IDs.
+1. Start Nara with `dist\Nara.exe` or `python main.py`.
+2. Click **Connect**, choose the server, voice channel, and text output channel.
+3. Click **Start Nara**.
+4. Click **Audio Test 5s** and speak during the test. Confirm the log says it heard at least one speaker.
+5. Click **Start Recording**.
+6. Speak for 20 to 30 seconds in Indonesian, English, or both.
+7. Click **Stop + Summary**.
+8. Check Discord output and `obsidian_vault/Indexes/Nara Meetings.md`.
+9. Use **List Speakers** and **Save Speaker Name** for any captured speaker IDs.

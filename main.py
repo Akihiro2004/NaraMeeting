@@ -8,10 +8,24 @@ import sys
 from pathlib import Path
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+def resolve_project_root() -> Path:
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        for candidate in (exe_dir, exe_dir.parent):
+            if (candidate / ".env").exists() or (candidate / ".env.example").exists():
+                return candidate
+            if (candidate / "data").exists() and (candidate / "models").exists():
+                return candidate
+        return exe_dir
+    return Path(__file__).resolve().parent
+
+
+PROJECT_ROOT = resolve_project_root()
 
 
 def reexec_inside_venv_if_available() -> None:
+    if getattr(sys, "frozen", False):
+        return
     if os.environ.get("NARA_SKIP_VENV_REEXEC") == "1":
         return
     venv_python = PROJECT_ROOT / ".venv" / "Scripts" / "python.exe"
@@ -66,7 +80,16 @@ def main() -> int:
         print(f"Transcript JSON: {result.files.transcript_json}")
         return 0
 
-    if not args.no_gui:
+    if not args.no_gui and not args.configure:
+        try:
+            from src.gui_app import run_nara_gui
+        except Exception as exc:
+            print(f"Could not load Nara GUI: {exc}")
+            print("Run python main.py --no-gui to use the terminal/channel-ID flow.")
+            return 1
+        return run_nara_gui(PROJECT_ROOT)
+
+    if args.configure:
         try:
             from src.channel_picker import run_channel_picker
         except Exception as exc:
@@ -91,9 +114,6 @@ def main() -> int:
         if args.configure:
             print("Configuration saved. Start Nara with python main.py.")
             return 0
-    elif args.configure:
-        print("--configure requires the GUI. Run python main.py --configure without --no-gui.")
-        return 1
 
     if not config.discord_token:
         print("Missing DISCORD_TOKEN. Use the GUI token field or paste your Discord bot token into the .env file.")
@@ -112,8 +132,7 @@ def main() -> int:
     try:
         import asyncio
 
-        runner = NaraBotRunner(config, logger)
-        asyncio.run(runner.run())
+        asyncio.run(run_bot(config, logger, NaraBotRunner))
         return 0
     except ConfigError as exc:
         print(exc)
@@ -199,6 +218,11 @@ def run_check() -> int:
 
     print("Check complete." if ok else "Check finished with missing requirements.")
     return 0 if ok else 1
+
+
+async def run_bot(config, logger, runner_cls) -> None:
+    runner = runner_cls(config, logger)
+    await runner.run()
 
 
 def whisper_model_available(models_dir: Path, model_size: str) -> bool:
